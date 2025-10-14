@@ -31,7 +31,7 @@
         }
         .container {
             width: 100%;
-            max-width: 500px; /* Adjusted max-width for the new layout */
+            max-width: 500px;
             background: var(--card-background);
             border-radius: 12px;
             box-shadow: var(--shadow);
@@ -39,7 +39,7 @@
             transition: all 0.3s ease;
         }
         h2 { text-align: center; margin-bottom: 2rem; font-weight: 700; }
-        .input-section { display: flex; gap: 0.5rem; margin-bottom: 1.5rem; }
+        .input-section { position: relative; display: flex; gap: 0.5rem; margin-bottom: 1.5rem; }
         #url-input {
             flex-grow: 1; padding: 0.75rem 1rem; border: 1px solid var(--border-color);
             border-radius: 8px; font-size: 1rem; transition: border-color 0.2s, box-shadow 0.2s;
@@ -49,47 +49,33 @@
             padding: 0.75rem 1.5rem; border: none; border-radius: 8px; font-size: 1rem;
             font-weight: 600; color: #fff; background-color: var(--primary-color);
             cursor: pointer; transition: background-color 0.2s, transform 0.1s;
-            width: 100%; /* Make buttons full width by default */
+            width: 100%;
         }
-        .btn.fetch { width: auto; } /* Specific class for the smaller fetch button */
+        .btn.fetch { width: auto; }
         .btn:hover { background-color: var(--primary-hover); }
         .btn:active { transform: scale(0.98); }
         .btn:disabled { background-color: #999; cursor: not-allowed; }
         .hidden { display: none !important; }
 
-        /* --- NEW LAYOUT STYLES --- */
+        .loader {
+            border: 4px solid #f3f3f3; border-radius: 50%; border-top: 4px solid var(--primary-color);
+            width: 24px; height: 24px; animation: spin 1s linear infinite;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
         #thumbnail {
-            width: 100%;
-            height: auto; /* Maintain aspect ratio */
-            border-radius: 8px;
-            object-fit: cover;
-            background-color: #eee;
-            margin-bottom: 1rem;
+            width: 100%; height: auto; border-radius: 8px; object-fit: cover;
+            background-color: #eee; margin-bottom: 1rem;
         }
-        #video-title {
-            font-size: 1.25rem;
-            font-weight: 600;
-            text-align: center;
-            margin-bottom: 0.5rem;
-        }
-        #video-duration {
-            font-size: 0.9rem;
-            color: #666;
-            text-align: center;
-            margin-bottom: 2rem;
-        }
+        #video-title { font-size: 1.25rem; font-weight: 600; text-align: center; margin-bottom: 0.5rem; }
+        #video-duration { font-size: 0.9rem; color: #666; text-align: center; margin-bottom: 2rem; }
         .formats-section h4 {
-            margin-bottom: 0.75rem;
-            font-weight: 600;
-            color: #495057;
-            border-top: 1px solid #eee;
-            padding-top: 1.5rem;
+            margin-bottom: 0.75rem; font-weight: 600; color: #495057;
+            border-top: 1px solid #eee; padding-top: 1.5rem;
         }
         .formats-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(85px, 1fr));
-            gap: 0.75rem;
-            margin-bottom: 1rem;
+            display: grid; grid-template-columns: repeat(auto-fill, minmax(85px, 1fr));
+            gap: 0.75rem; margin-bottom: 1rem;
         }
         .format-box {
             padding: 0.75rem; border: 2px solid var(--border-color); border-radius: 8px;
@@ -103,7 +89,11 @@
         #download-section { margin-top: 2rem; }
         #progress-container { width: 100%; height: 45px; background-color: #e9ecef; border-radius: 8px; overflow: hidden; position: relative; }
         #progress-bar { width: 0%; height: 100%; background-color: var(--success-color); transition: width 0.3s ease-in-out; }
-        #progress-text { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: #fff; font-weight: 600; text-shadow: 1px 1px 2px rgba(0,0,0,0.5); }
+        #progress-text {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            color: #fff; font-weight: 600; text-shadow: 1px 1px 2px rgba(0,0,0,0.5);
+            width: 100%; text-align: center;
+        }
     </style>
 </head>
 <body>
@@ -112,13 +102,13 @@
         <div class="input-section">
             <input type="text" id="url-input" placeholder="Paste video link here...">
             <button id="fetch-btn" class="btn fetch">Fetch</button>
+            <div id="fetch-loader" class="loader hidden" style="margin: auto 1.5rem;"></div>
         </div>
 
         <div id="results-container" class="hidden">
             <img id="thumbnail" src="" alt="Video Thumbnail">
             <h3 id="video-title"></h3>
             <p id="video-duration"></p>
-
             <div class="formats-section">
                 <h4>Audio Only:</h4>
                 <div id="audio-formats" class="formats-grid"></div>
@@ -127,7 +117,6 @@
                 <h4>Video Quality:</h4>
                 <div id="video-formats" class="formats-grid"></div>
             </div>
-            
             <div id="download-section">
                 <button id="download-btn" class="btn">Download</button>
                 <div id="progress-container" class="hidden">
@@ -139,8 +128,8 @@
     </div>
 
 <script>
-    // --- DOM Elements ---
     const fetchBtn = document.getElementById('fetch-btn');
+    const fetchLoader = document.getElementById('fetch-loader');
     const urlInput = document.getElementById('url-input');
     const resultsContainer = document.getElementById('results-container');
     const thumbnail = document.getElementById('thumbnail');
@@ -153,18 +142,19 @@
     const progressBar = document.getElementById('progress-bar');
     const progressText = document.getElementById('progress-text');
 
-    // --- Event Listeners ---
+    let progressSource = null; // To hold the EventSource connection
+
     fetchBtn.addEventListener('click', fetchVideoInfo);
     resultsContainer.addEventListener('click', handleFormatSelection);
     downloadBtn.addEventListener('click', startDownload);
 
-    // --- Functions (No changes needed in JavaScript logic) ---
     async function fetchVideoInfo() {
         const url = urlInput.value.trim();
         if (!url) return alert('Please paste a video URL.');
         
-        fetchBtn.disabled = true;
-        fetchBtn.textContent = 'Fetching...';
+        // --- NEW: Show loader ---
+        fetchBtn.classList.add('hidden');
+        fetchLoader.classList.remove('hidden');
         resultsContainer.classList.add('hidden');
 
         try {
@@ -182,8 +172,9 @@
         } catch (error) {
             alert(`Error: ${error.message}`);
         } finally {
-            fetchBtn.disabled = false;
-            fetchBtn.textContent = 'Fetch';
+            // --- NEW: Hide loader ---
+            fetchBtn.classList.remove('hidden');
+            fetchLoader.classList.add('hidden');
         }
     }
 
@@ -235,70 +226,81 @@
         }
     }
 
-    async function startDownload() {
+    // --- UPGRADED startDownload function ---
+    function startDownload() {
         const selectedFormat = document.querySelector('.format-box.selected');
         if (!selectedFormat) return alert('Please select a quality to download.');
-        
+
         const url = urlInput.value.trim();
         const formatId = selectedFormat.dataset.formatId;
 
+        // Reset and show progress bar
         downloadBtn.classList.add('hidden');
         progressContainer.classList.remove('hidden');
         progressBar.style.width = '0%';
-        progressText.textContent = '0%';
+        progressText.textContent = 'Connecting...';
+        
+        // --- NEW: Connect to the progress stream ---
+        progressSource = new EventSource('/progress');
 
-        try {
-            const response = await fetch('/download', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ url, formatId })
-            });
-            if (!response.ok) throw new Error('Download failed. Server responded with an error.');
+        progressSource.onmessage = event => {
+            const data = JSON.parse(event.data);
+
+            if (data.status === 'initializing' || data.status === 'complete' || data.status === 'error') {
+                progressText.textContent = data.message;
+            }
             
-            const contentLength = +response.headers.get('Content-Length');
-            let receivedLength = 0;
-            const reader = response.body.getReader();
-            const chunks = [];
-            
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                chunks.push(value);
-                receivedLength += value.length;
-                if (contentLength) {
-                    const percent = Math.round((receivedLength / contentLength) * 100);
-                    progressBar.style.width = `${percent}%`;
-                    progressText.textContent = `${percent}%`;
-                }
+            if (data.status === 'downloading') {
+                const percent = Math.round(data.percent);
+                progressBar.style.width = `${percent}%`;
+                progressText.textContent = `${percent}%`;
             }
 
-            progressText.textContent = 'Finalizing...';
-            const blob = new Blob(chunks);
+            if (data.status === 'complete' || data.status === 'error') {
+                progressSource.close(); // Close the connection
+            }
+        };
+
+        progressSource.onerror = () => {
+            alert('Connection to server lost.');
+            progressSource.close();
+            resetDownloadUI();
+        };
+
+        // --- Trigger the download on the backend ---
+        fetch('/download', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url, formatId })
+        })
+        .then(response => {
+            if (!response.ok) {
+                return response.json().then(err => { throw new Error(err.error || 'Download failed.') });
+            }
+            return response.blob(); // Get the file as a blob
+        })
+        .then(blob => {
+            // Create a link and trigger the browser's save dialog
             const downloadUrl = window.URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.style.display = 'none';
             a.href = downloadUrl;
-            
-            const disposition = response.headers.get('content-disposition');
-            let filename = 'video.mp4';
-            if (disposition && disposition.includes('attachment')) {
-                const filenameMatch = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/.exec(disposition);
-                if (filenameMatch && filenameMatch[1]) {
-                    filename = filenameMatch[1].replace(/['"]/g, '');
-                }
-            }
-            
-            a.download = filename;
+            a.download = `${videoTitle.textContent || 'video'}.mp4`;
             document.body.appendChild(a);
-a.click();
+            a.click();
             window.URL.revokeObjectURL(downloadUrl);
             a.remove();
-        } catch (error) {
+            resetDownloadUI();
+        })
+        .catch(error => {
             alert(`Download Error: ${error.message}`);
-        } finally {
-            downloadBtn.classList.remove('hidden');
-            progressContainer.classList.add('hidden');
-        }
+            resetDownloadUI();
+        });
+    }
+
+    function resetDownloadUI() {
+        downloadBtn.classList.remove('hidden');
+        progressContainer.classList.add('hidden');
     }
 </script>
 </body>
