@@ -1,5 +1,5 @@
 const express = require("express");
-const { exec: ytDlpExec } = require("yt-dlp-exec");
+const { spawn } = require("child_process"); // Use Node's built-in spawn
 const cors = require("cors");
 const path = require("path");
 
@@ -11,6 +11,33 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
 
+// --- Helper to get video metadata ---
+async function getVideoInfo(url) {
+    return new Promise((resolve, reject) => {
+        const ytProcess = spawn('yt-dlp', ['--dump-single-json', '--no-warnings', url]);
+        
+        let stdoutData = '';
+        let stderrData = '';
+
+        ytProcess.stdout.on('data', (data) => stdoutData += data);
+        ytProcess.stderr.on('data', (data) => stderrData += data);
+
+        ytProcess.on('close', (code) => {
+            if (code === 0) {
+                try {
+                    resolve(JSON.parse(stdoutData));
+                } catch (e) {
+                    reject(new Error("Failed to parse video metadata."));
+                }
+            } else {
+                reject(new Error(`yt-dlp exited with code ${code}. Error: ${stderrData}`));
+            }
+        });
+        
+        ytProcess.on('error', (err) => reject(err));
+    });
+}
+
 // --- Route to get video info ---
 app.post("/info", async (req, res) => {
     const { url } = req.body;
@@ -19,11 +46,7 @@ app.post("/info", async (req, res) => {
     }
     console.log(`Fetching info for: ${url}`);
     try {
-        const metadata = await ytDlpExec(url, {
-            dumpSingleJson: true,
-            noWarnings: true,
-        });
-        // Send back only the necessary details
+        const metadata = await getVideoInfo(url);
         res.json({
             title: metadata.title,
             thumbnail: metadata.thumbnail,
@@ -31,12 +54,12 @@ app.post("/info", async (req, res) => {
             formats: metadata.formats,
         });
     } catch (error) {
-        console.error("Info fetch error:", error);
+        console.error("Info fetch error:", error.message);
         res.status(500).json({ error: "Failed to fetch video information." });
     }
 });
 
-// --- Route to download the selected video format ---
+// --- Route to download video ---
 app.post("/download", async (req, res) => {
     const { url, formatId } = req.body;
     if (!url || !formatId) {
@@ -44,8 +67,7 @@ app.post("/download", async (req, res) => {
     }
     console.log(`Download request for: ${url} with format: ${formatId}`);
     try {
-        // Fetch metadata again to get a reliable title for the filename
-        const metadata = await ytDlpExec(url, { dumpSingleJson: true });
+        const metadata = await getVideoInfo(url);
         const sanitizedTitle = metadata.title.replace(/[^a-zA-Z0-9\s.-]/g, "").trim();
         const filename = `${sanitizedTitle || 'video'}.mp4`;
         
@@ -54,16 +76,31 @@ app.post("/download", async (req, res) => {
         res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
         res.setHeader('Content-Type', 'video/mp4');
 
-        const videoStream = ytDlpExec(url, {
-            format: formatId,
-            output: '-', // Stream to stdout
-        }).stdout;
+        const ytProcess = spawn('yt-dlp', [
+            '-f', formatId,
+            '-o', '-', // Stream to stdout
+            url
+        ]);
 
-        videoStream.pipe(res);
+        ytProcess.stdout.pipe(res);
+
+        ytProcess.stderr.on('data', (data) => {
+            console.error(`yt-dlp stderr: ${data}`);
+        });
+
+        ytProcess.on('close', (code) => {
+            if (code !== 0) {
+                console.error(`yt-dlp process exited with code ${code}`);
+            } else {
+                console.log("Stream finished successfully.");
+            }
+        });
 
     } catch (error) {
-        console.error("Download stream error:", error);
-        res.status(500).json({ error: "Failed to start video download." });
+        console.error("Download route error:", error.message);
+        if (!res.headersSent) {
+            res.status(500).json({ error: "Failed to start video download." });
+        }
     }
 });
 
