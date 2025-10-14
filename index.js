@@ -1,86 +1,73 @@
 const express = require("express");
-const { spawn } = require("child_process");
+const { exec: ytDlpExec } = require("yt-dlp-exec");
+const cors = require("cors");
 const path = require("path");
-const fs = require("fs");
 
 const app = express();
-const PORT = 4000;
+const PORT = process.env.PORT || 4000;
 
-// Path to your yt-dlp.exe
-const ytdlpPath = "C:\\Users\\Hp 840 G5\\Downloads\\yt-dlp.exe";
-
-// Ensure downloads folder exists
-const downloadsFolder = path.join(__dirname, "downloads");
-if (!fs.existsSync(downloadsFolder)) {
-    fs.mkdirSync(downloadsFolder);
-}
-
-// Middleware
+// --- Middleware ---
+app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
 
-let clients = [];
-
-// SSE endpoint for live progress
-app.get("/progress", (req, res) => {
-    res.writeHead(200, {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        Connection: "keep-alive",
-    });
-    clients.push(res);
-    req.on("close", () => {
-        clients = clients.filter(c => c !== res);
-    });
-});
-
-// Send progress to all clients
-function sendProgress(data) {
-    clients.forEach(res => res.write(`data: ${JSON.stringify(data)}\n\n`));
-}
-
-// Route to download video
-app.post("/download", (req, res) => {
+// --- Route to get video info ---
+app.post("/info", async (req, res) => {
     const { url } = req.body;
     if (!url) {
         return res.status(400).json({ error: "Please provide a video URL." });
     }
-
-    const outputTemplate = path.join(downloadsFolder, "%(title)s.%(ext)s");
-
-    const ytProcess = spawn(ytdlpPath, [
-        "-f", "best",
-        "-o", outputTemplate,
-        url
-    ]);
-
-    ytProcess.stdout.on("data", (data) => {
-        const output = data.toString();
-        const match = output.match(/(\d+\.\d)%/); // capture %
-        if (match) {
-            const progress = parseFloat(match[1]);
-            sendProgress({ progress });
-        }
-    });
-
-    ytProcess.stderr.on("data", (data) => {
-        console.error("yt-dlp:", data.toString());
-    });
-
-    ytProcess.on("close", (code) => {
-        sendProgress({ progress: 100, message: "Download complete!" });
-        console.log(`yt-dlp exited with code ${code}`);
-    });
-
-    res.json({ message: "Download started..." });
+    console.log(`Fetching info for: ${url}`);
+    try {
+        const metadata = await ytDlpExec(url, {
+            dumpSingleJson: true,
+            noWarnings: true,
+        });
+        // Send back only the necessary details
+        res.json({
+            title: metadata.title,
+            thumbnail: metadata.thumbnail,
+            duration: metadata.duration,
+            formats: metadata.formats,
+        });
+    } catch (error) {
+        console.error("Info fetch error:", error);
+        res.status(500).json({ error: "Failed to fetch video information." });
+    }
 });
 
-// Route for manual test
-app.get("/test", (req, res) => {
-    res.sendFile(path.join(__dirname, "public", "index.html"));
+// --- Route to download the selected video format ---
+app.post("/download", async (req, res) => {
+    const { url, formatId } = req.body;
+    if (!url || !formatId) {
+        return res.status(400).json({ error: "URL and Format ID are required." });
+    }
+    console.log(`Download request for: ${url} with format: ${formatId}`);
+    try {
+        // Fetch metadata again to get a reliable title for the filename
+        const metadata = await ytDlpExec(url, { dumpSingleJson: true });
+        const sanitizedTitle = metadata.title.replace(/[^a-zA-Z0-9\s.-]/g, "").trim();
+        const filename = `${sanitizedTitle || 'video'}.mp4`;
+        
+        console.log(`Streaming with filename: ${filename}`);
+
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+        res.setHeader('Content-Type', 'video/mp4');
+
+        const videoStream = ytDlpExec(url, {
+            format: formatId,
+            output: '-', // Stream to stdout
+        }).stdout;
+
+        videoStream.pipe(res);
+
+    } catch (error) {
+        console.error("Download stream error:", error);
+        res.status(500).json({ error: "Failed to start video download." });
+    }
 });
 
-// Start server
+// --- Server Start ---
 app.listen(PORT, () => {
-    console.log(`✅ YT-DLP Server running at http://localhost:${PORT}`);
+    console.log(`✅ Server is live and running on port ${PORT}`);
 });
