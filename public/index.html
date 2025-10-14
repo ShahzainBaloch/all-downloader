@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>YT-DLP Downloader</title>
+  <style>
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: #f0f2f5;
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+      padding: 2rem;
+      min-height: 100vh;
+    }
+
+    .container {
+      background: #fff;
+      padding: 2rem;
+      border-radius: 10px;
+      width: 100%;
+      max-width: 500px;
+      box-shadow: 0 8px 20px rgba(0,0,0,0.1);
+    }
+
+    h2 {
+      text-align: center;
+      margin-bottom: 1.5rem;
+    }
+
+    input, select, button {
+      width: 100%;
+      padding: 0.6rem;
+      margin: 0.5rem 0;
+      border-radius: 5px;
+      border: 1px solid #ccc;
+      font-size: 1rem;
+    }
+
+    button {
+      background: #007bff;
+      color: white;
+      border: none;
+      cursor: pointer;
+      transition: 0.3s;
+    }
+
+    button:hover {
+      background: #0056b3;
+    }
+
+    #progressWrapper {
+      margin-top: 1rem;
+      background: #eee;
+      border-radius: 5px;
+      overflow: hidden;
+    }
+
+    #progressBar {
+      height: 20px;
+      width: 0%;
+      background: #28a745;
+      text-align: center;
+      color: white;
+      line-height: 20px;
+      transition: width 0.2s;
+    }
+
+    #output {
+      margin-top: 1rem;
+      white-space: pre-wrap;
+      max-height: 250px;
+      overflow-y: auto;
+      background: #f9f9f9;
+      padding: 1rem;
+      border-radius: 5px;
+      font-size: 0.9rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2>YouTube Video Downloader</h2>
+    <input type="text" id="url" placeholder="Paste YouTube link here" />
+    
+    <select id="format">
+      <option value="">Select Quality (auto)</option>
+      <option value="bestvideo+bestaudio">Best</option>
+      <option value="bestvideo[height<=720]+bestaudio">720p</option>
+      <option value="bestvideo[height<=480]+bestaudio">480p</option>
+      <option value="bestvideo[height<=360]+bestaudio">360p</option>
+      <option value="bestaudio">Audio Only</option>
+    </select>
+
+    <button id="downloadBtn">Download Video</button>
+
+    <div id="progressWrapper">
+      <div id="progressBar">0%</div>
+    </div>
+
+    <div id="output"></div>
+  </div>
+
+  <script>
+    const downloadBtn = document.getElementById('downloadBtn');
+    const output = document.getElementById('output');
+    const progressBar = document.getElementById('progressBar');
+
+    downloadBtn.addEventListener('click', async () => {
+      const url = document.getElementById('url').value.trim();
+      const format = document.getElementById('format').value;
+      if(!url) { alert('Please enter a URL'); return; }
+
+      output.textContent = '';
+      progressBar.style.width = '0%';
+      progressBar.textContent = '0%';
+
+      try {
+        const response = await fetch('/download', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url, format })
+        });
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+        let received = 0;
+
+        while(true) {
+          const { done, value } = await reader.read();
+          if(done) break;
+
+          const chunk = decoder.decode(value);
+          output.textContent += chunk;
+
+          // crude % calculation (optional: parse yt-dlp progress)
+          const match = chunk.match(/(\d{1,3}\.\d)%/);
+          if(match) {
+            const pct = match[1];
+            progressBar.style.width = pct + '%';
+            progressBar.textContent = pct + '%';
+          }
+        }
+
+        progressBar.style.width = '100%';
+        progressBar.textContent = '100%';
+        output.textContent += '\nDownload Completed!';
+      } catch(err) {
+        output.textContent = 'Error: ' + err.message;
+      }
+    });
+  </script>
+</body>
+</html>

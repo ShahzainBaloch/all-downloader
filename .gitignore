@@ -1,0 +1,19 @@
+# Dependencies
+/node_modules
+
+# Downloaded media
+/downloads/
+*.mkv
+*.webm.part
+
+# OS and editor junk
+.DS_Store
+Thumbs.db
+
+# Logs and temp
+*.log
+*.tmp
+
+# Environment and secrets
+.env
+.env.local
