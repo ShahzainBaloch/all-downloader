@@ -30,14 +30,14 @@ async function getVideoInfo(url) {
     });
 }
 
-// --- NEW Helper to process and simplify formats ---
+// --- UPGRADED Helper to process and merge formats ---
 function processFormats(formats) {
     const availableQualities = {
         video: {},
         audio: null
     };
 
-    // Find the best audio-only format
+    // --- NEW LOGIC: Find the best audio-only stream ---
     let bestAudio = null;
     formats
         .filter(f => f.vcodec === 'none' && f.acodec !== 'none' && f.abr)
@@ -54,24 +54,36 @@ function processFormats(formats) {
         };
     }
 
-    // Define standard video resolutions
     const standardResolutions = [1080, 720, 480, 360, 240, 144];
 
-    // Find the best format for each standard resolution
     standardResolutions.forEach(res => {
         let bestFormatForRes = null;
+
+        // --- NEW LOGIC: Step 1: Look for pre-merged files (ideal case) ---
         formats
-            // Filter for formats that have both video and audio, and have a height
-            .filter(f => f.vcodec !== 'none' && f.acodec !== 'none' && f.height)
+            .filter(f => f.vcodec !== 'none' && f.acodec !== 'none' && f.height && Math.abs(f.height - res) < 50)
             .forEach(f => {
-                // Check if the format's height is close to the standard resolution
-                if (Math.abs(f.height - res) < 50) { // Allow for some tolerance
-                    // If we haven't found a format for this resolution yet, or if this one is better
-                    if (!bestFormatForRes || (f.tbr || 0) > (bestFormatForRes.tbr || 0)) {
-                        bestFormatForRes = f;
-                    }
+                if (!bestFormatForRes || (f.tbr || 0) > (bestFormatForRes.tbr || 0)) {
+                    bestFormatForRes = f;
                 }
             });
+
+        // --- NEW LOGIC: Step 2: If no pre-merged file, find best video-only and combine with best audio ---
+        if (!bestFormatForRes && bestAudio) {
+            let bestVideoOnly = null;
+            formats
+                .filter(f => f.vcodec !== 'none' && f.acodec === 'none' && f.height && Math.abs(f.height - res) < 50)
+                .forEach(f => {
+                    if (!bestVideoOnly || (f.tbr || 0) > (bestVideoOnly.tbr || 0)) {
+                        bestVideoOnly = f;
+                    }
+                });
+
+            if (bestVideoOnly) {
+                // Create a combined format ID for yt-dlp to merge
+                bestFormatForRes = { format_id: `${bestVideoOnly.format_id}+${bestAudio.format_id}` };
+            }
+        }
         
         if (bestFormatForRes) {
             availableQualities.video[res] = {
@@ -92,14 +104,12 @@ app.post("/info", async (req, res) => {
     console.log(`Fetching info for: ${url}`);
     try {
         const metadata = await getVideoInfo(url);
-        // Process the formats before sending them to the client
         const processedFormats = processFormats(metadata.formats);
         
         res.json({
             title: metadata.title,
             thumbnail: metadata.thumbnail,
             duration: metadata.duration,
-            // Send the clean, processed format list instead of the raw one
             formats: processedFormats,
         });
     } catch (error) {
@@ -108,7 +118,7 @@ app.post("/info", async (req, res) => {
     }
 });
 
-// --- Route to download video ---
+// --- Route to download video (no changes needed here) ---
 app.post("/download", async (req, res) => {
     const { url, formatId } = req.body;
     if (!url || !formatId) return res.status(400).json({ error: "URL and Format ID are required." });
