@@ -15,7 +15,7 @@ app.use(express.static(path.join(__dirname, "public")));
 async function getVideoInfo(url) {
     return new Promise((resolve, reject) => {
         const ytProcess = spawn('yt-dlp', ['--dump-single-json', '--no-warnings', url]);
-        
+
         let stdoutData = '';
         let stderrData = '';
 
@@ -33,7 +33,7 @@ async function getVideoInfo(url) {
                 reject(new Error(`yt-dlp exited with code ${code}. Error: ${stderrData}`));
             }
         });
-        
+
         ytProcess.on('error', (err) => reject(err));
     });
 }
@@ -70,7 +70,7 @@ app.post("/download", async (req, res) => {
         const metadata = await getVideoInfo(url);
         const sanitizedTitle = metadata.title.replace(/[^a-zA-Z0-9\s.-]/g, "").trim();
         const filename = `${sanitizedTitle || 'video'}.mp4`;
-        
+
         console.log(`Streaming with filename: ${filename}`);
 
         res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
