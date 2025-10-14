@@ -26,12 +26,12 @@
             display: flex;
             justify-content: center;
             align-items: flex-start;
-            padding-top: 5vh;
+            padding: 2rem;
             min-height: 100vh;
         }
         .container {
             width: 100%;
-            max-width: 550px;
+            max-width: 500px; /* Adjusted max-width for the new layout */
             background: var(--card-background);
             border-radius: 12px;
             box-shadow: var(--shadow);
@@ -49,22 +49,47 @@
             padding: 0.75rem 1.5rem; border: none; border-radius: 8px; font-size: 1rem;
             font-weight: 600; color: #fff; background-color: var(--primary-color);
             cursor: pointer; transition: background-color 0.2s, transform 0.1s;
+            width: 100%; /* Make buttons full width by default */
         }
+        .btn.fetch { width: auto; } /* Specific class for the smaller fetch button */
         .btn:hover { background-color: var(--primary-hover); }
         .btn:active { transform: scale(0.98); }
         .btn:disabled { background-color: #999; cursor: not-allowed; }
         .hidden { display: none !important; }
-        #video-details { display: flex; gap: 1rem; margin-bottom: 1.5rem; align-items: center; }
-        #thumbnail { width: 160px; height: 90px; border-radius: 8px; object-fit: cover; background-color: #eee; }
-        #video-meta { display: flex; flex-direction: column; gap: 0.25rem; }
-        #video-title { font-size: 1.1rem; font-weight: 600; }
-        #video-duration { font-size: 0.9rem; color: #666; }
-        .formats-section h4 { margin-bottom: 0.75rem; font-weight: 600; color: #495057; }
+
+        /* --- NEW LAYOUT STYLES --- */
+        #thumbnail {
+            width: 100%;
+            height: auto; /* Maintain aspect ratio */
+            border-radius: 8px;
+            object-fit: cover;
+            background-color: #eee;
+            margin-bottom: 1rem;
+        }
+        #video-title {
+            font-size: 1.25rem;
+            font-weight: 600;
+            text-align: center;
+            margin-bottom: 0.5rem;
+        }
+        #video-duration {
+            font-size: 0.9rem;
+            color: #666;
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+        .formats-section h4 {
+            margin-bottom: 0.75rem;
+            font-weight: 600;
+            color: #495057;
+            border-top: 1px solid #eee;
+            padding-top: 1.5rem;
+        }
         .formats-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(80px, 1fr));
+            grid-template-columns: repeat(auto-fill, minmax(85px, 1fr));
             gap: 0.75rem;
-            margin-bottom: 1.5rem;
+            margin-bottom: 1rem;
         }
         .format-box {
             padding: 0.75rem; border: 2px solid var(--border-color); border-radius: 8px;
@@ -74,6 +99,8 @@
         .format-box.clickable:hover { border-color: var(--primary-color); transform: translateY(-3px); box-shadow: 0 4px 10px rgba(0,0,0,0.05); }
         .format-box.selected { background-color: var(--primary-color); color: #fff; border-color: var(--primary-color); font-weight: 600; }
         .format-box.disabled { background-color: #f8f9fa; color: #adb5bd; cursor: not-allowed; }
+        
+        #download-section { margin-top: 2rem; }
         #progress-container { width: 100%; height: 45px; background-color: #e9ecef; border-radius: 8px; overflow: hidden; position: relative; }
         #progress-bar { width: 0%; height: 100%; background-color: var(--success-color); transition: width 0.3s ease-in-out; }
         #progress-text { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: #fff; font-weight: 600; text-shadow: 1px 1px 2px rgba(0,0,0,0.5); }
@@ -83,30 +110,26 @@
     <div class="container">
         <h2>All-in-One Video Downloader</h2>
         <div class="input-section">
-            <input type="text" id="url-input" placeholder="Paste video link here (YouTube, TikTok, etc.)">
-            <button id="fetch-btn" class="btn">Fetch</button>
+            <input type="text" id="url-input" placeholder="Paste video link here...">
+            <button id="fetch-btn" class="btn fetch">Fetch</button>
         </div>
 
         <div id="results-container" class="hidden">
-            <div id="video-details">
-                <img id="thumbnail" src="" alt="Video Thumbnail">
-                <div id="video-meta">
-                    <h3 id="video-title"></h3>
-                    <p id="video-duration"></p>
-                </div>
-            </div>
+            <img id="thumbnail" src="" alt="Video Thumbnail">
+            <h3 id="video-title"></h3>
+            <p id="video-duration"></p>
 
-            <div class="formats-section">
-                <h4>Video Quality:</h4>
-                <div id="video-formats" class="formats-grid"></div>
-            </div>
             <div class="formats-section">
                 <h4>Audio Only:</h4>
                 <div id="audio-formats" class="formats-grid"></div>
             </div>
+            <div class="formats-section">
+                <h4>Video Quality:</h4>
+                <div id="video-formats" class="formats-grid"></div>
+            </div>
             
             <div id="download-section">
-                <button id="download-btn" class="btn" style="width: 100%;">Download</button>
+                <button id="download-btn" class="btn">Download</button>
                 <div id="progress-container" class="hidden">
                     <div id="progress-bar"></div>
                     <span id="progress-text">0%</span>
@@ -116,6 +139,7 @@
     </div>
 
 <script>
+    // --- DOM Elements ---
     const fetchBtn = document.getElementById('fetch-btn');
     const urlInput = document.getElementById('url-input');
     const resultsContainer = document.getElementById('results-container');
@@ -129,10 +153,12 @@
     const progressBar = document.getElementById('progress-bar');
     const progressText = document.getElementById('progress-text');
 
+    // --- Event Listeners ---
     fetchBtn.addEventListener('click', fetchVideoInfo);
     resultsContainer.addEventListener('click', handleFormatSelection);
     downloadBtn.addEventListener('click', startDownload);
 
+    // --- Functions (No changes needed in JavaScript logic) ---
     async function fetchVideoInfo() {
         const url = urlInput.value.trim();
         if (!url) return alert('Please paste a video URL.');
@@ -166,13 +192,11 @@
         videoTitle.textContent = data.title;
         videoDuration.textContent = `Duration: ${new Date(data.duration * 1000).toISOString().substr(11, 8)}`;
         
-        // --- NEW Logic for displaying formats ---
         videoFormatsContainer.innerHTML = '';
         audioFormatsContainer.innerHTML = '';
         
         const standardResolutions = [1080, 720, 480, 360, 240, 144];
         
-        // Display Video Formats
         standardResolutions.forEach(res => {
             const format = data.formats.video[res];
             const box = document.createElement('div');
@@ -187,7 +211,6 @@
             videoFormatsContainer.appendChild(box);
         });
         
-        // Display Audio Format
         const audioFormat = data.formats.audio;
         const audioBox = document.createElement('div');
         audioBox.className = 'format-box';
@@ -267,7 +290,7 @@
             
             a.download = filename;
             document.body.appendChild(a);
-            a.click();
+a.click();
             window.URL.revokeObjectURL(downloadUrl);
             a.remove();
         } catch (error) {
