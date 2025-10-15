@@ -142,7 +142,7 @@
     const progressBar = document.getElementById('progress-bar');
     const progressText = document.getElementById('progress-text');
 
-    let progressSource = null; // To hold the EventSource connection
+    let progressSource = null;
 
     fetchBtn.addEventListener('click', fetchVideoInfo);
     resultsContainer.addEventListener('click', handleFormatSelection);
@@ -152,7 +152,6 @@
         const url = urlInput.value.trim();
         if (!url) return alert('Please paste a video URL.');
         
-        // --- NEW: Show loader ---
         fetchBtn.classList.add('hidden');
         fetchLoader.classList.remove('hidden');
         resultsContainer.classList.add('hidden');
@@ -172,7 +171,6 @@
         } catch (error) {
             alert(`Error: ${error.message}`);
         } finally {
-            // --- NEW: Hide loader ---
             fetchBtn.classList.remove('hidden');
             fetchLoader.classList.add('hidden');
         }
@@ -186,16 +184,22 @@
         videoFormatsContainer.innerHTML = '';
         audioFormatsContainer.innerHTML = '';
         
-        const standardResolutions = [1080, 720, 480, 360, 240, 144];
+        const standardResolutions = ['Auto', 1080, 720, 480, 360, 240, 144];
         
-        standardResolutions.forEach(res => {
+        // --- UPGRADED to handle 'Auto' ---
+        standardResolutions.forEach((res, index) => {
             const format = data.formats.video[res];
             const box = document.createElement('div');
             box.className = 'format-box';
-            box.textContent = `${res}p`;
+            box.textContent = (res === 'Auto') ? 'Auto' : `${res}p`;
+
             if (format) {
                 box.classList.add('clickable');
                 box.dataset.formatId = format.formatId;
+                // Select "Auto" by default
+                if (res === 'Auto') {
+                    box.classList.add('selected');
+                }
             } else {
                 box.classList.add('disabled');
             }
@@ -226,48 +230,39 @@
         }
     }
 
-    // --- UPGRADED startDownload function ---
     function startDownload() {
+        // --- UPGRADED: No alert needed, will always find 'Auto' as default ---
         const selectedFormat = document.querySelector('.format-box.selected');
-        if (!selectedFormat) return alert('Please select a quality to download.');
-
+        
         const url = urlInput.value.trim();
         const formatId = selectedFormat.dataset.formatId;
 
-        // Reset and show progress bar
         downloadBtn.classList.add('hidden');
         progressContainer.classList.remove('hidden');
         progressBar.style.width = '0%';
         progressText.textContent = 'Connecting...';
         
-        // --- NEW: Connect to the progress stream ---
         progressSource = new EventSource('/progress');
-
         progressSource.onmessage = event => {
             const data = JSON.parse(event.data);
-
             if (data.status === 'initializing' || data.status === 'complete' || data.status === 'error') {
                 progressText.textContent = data.message;
             }
-            
             if (data.status === 'downloading') {
                 const percent = Math.round(data.percent);
                 progressBar.style.width = `${percent}%`;
                 progressText.textContent = `${percent}%`;
             }
-
             if (data.status === 'complete' || data.status === 'error') {
-                progressSource.close(); // Close the connection
+                progressSource.close();
             }
         };
-
         progressSource.onerror = () => {
             alert('Connection to server lost.');
             progressSource.close();
             resetDownloadUI();
         };
 
-        // --- Trigger the download on the backend ---
         fetch('/download', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -277,15 +272,22 @@
             if (!response.ok) {
                 return response.json().then(err => { throw new Error(err.error || 'Download failed.') });
             }
-            return response.blob(); // Get the file as a blob
+            const disposition = response.headers.get('content-disposition');
+            let filename = `${videoTitle.textContent || 'video'}.mp4`;
+            if (disposition && disposition.includes('attachment')) {
+                const filenameMatch = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/.exec(disposition);
+                if (filenameMatch && filenameMatch[1]) {
+                    filename = filenameMatch[1].replace(/['"]/g, '');
+                }
+            }
+            return response.blob().then(blob => ({ blob, filename }));
         })
-        .then(blob => {
-            // Create a link and trigger the browser's save dialog
+        .then(({ blob, filename }) => {
             const downloadUrl = window.URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.style.display = 'none';
             a.href = downloadUrl;
-            a.download = `${videoTitle.textContent || 'video'}.mp4`;
+            a.download = filename;
             document.body.appendChild(a);
             a.click();
             window.URL.revokeObjectURL(downloadUrl);

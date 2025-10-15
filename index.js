@@ -2,7 +2,7 @@ const express = require("express");
 const { spawn } = require("child_process");
 const cors = require("cors");
 const path = require("path");
-const fs = require("fs"); // File System module for managing temp files
+const fs = require("fs");
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -12,33 +12,24 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
 
-// --- Real-time Progress Reporting with Server-Sent Events (SSE) ---
+// --- Real-time Progress (SSE) ---
 let clients = [];
-
-// Endpoint for clients to connect and listen for progress
 app.get("/progress", (req, res) => {
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
-    res.flushHeaders(); // Flush the headers to establish the connection
-
+    res.flushHeaders();
     clients.push(res);
-    console.log("Client connected for progress updates.");
-
-    req.on('close', () => {
-        clients = clients.filter(client => client !== res);
-        console.log("Client disconnected.");
-    });
+    req.on('close', () => { clients = clients.filter(c => c !== res); });
 });
-
-// Function to send progress data to all connected clients
 function sendProgress(data) {
     clients.forEach(client => client.write(`data: ${JSON.stringify(data)}\n\n`));
 }
 
-// --- Helper Functions (No changes here) ---
+// --- Helper to get video metadata ---
 async function getVideoInfo(url) {
     return new Promise((resolve, reject) => {
+        // We removed the cookie logic from here to simplify; it will be in the download step
         const ytProcess = spawn('yt-dlp', ['--dump-single-json', '--no-warnings', url]);
         let stdoutData = '', stderrData = '';
         ytProcess.stdout.on('data', (data) => stdoutData += data);
@@ -55,8 +46,21 @@ async function getVideoInfo(url) {
     });
 }
 
+// --- FINAL, UPGRADED Helper to process formats ---
 function processFormats(formats) {
-    const availableQualities = { video: {}, audio: null };
+    if (!Array.isArray(formats)) return { video: {}, audio: null }; // Safety check
+
+    const availableQualities = {
+        video: {},
+        audio: null
+    };
+
+    // --- Add the reliable "Auto" option ---
+    availableQualities.video['Auto'] = {
+        label: 'Auto',
+        formatId: 'bestvideo+bestaudio/best' // This is the magic yt-dlp command
+    };
+
     let bestAudio = null;
     formats.filter(f => f.vcodec === 'none' && f.acodec !== 'none' && f.abr).forEach(f => {
         if (!bestAudio || f.abr > bestAudio.abr) bestAudio = f;
@@ -64,12 +68,16 @@ function processFormats(formats) {
     if (bestAudio) {
         availableQualities.audio = { label: `${Math.round(bestAudio.abr)}kbps`, formatId: bestAudio.format_id };
     }
+
     const standardResolutions = [1080, 720, 480, 360, 240, 144];
     standardResolutions.forEach(res => {
         let bestFormatForRes = null;
+        // First, look for pre-merged files
         formats.filter(f => f.vcodec !== 'none' && f.acodec !== 'none' && f.height && Math.abs(f.height - res) < 50).forEach(f => {
             if (!bestFormatForRes || (f.tbr || 0) > (bestFormatForRes.tbr || 0)) bestFormatForRes = f;
         });
+
+        // If no pre-merged file, find best video-only and combine with best audio
         if (!bestFormatForRes && bestAudio) {
             let bestVideoOnly = null;
             formats.filter(f => f.vcodec !== 'none' && f.acodec === 'none' && f.height && Math.abs(f.height - res) < 50).forEach(f => {
@@ -79,14 +87,16 @@ function processFormats(formats) {
                 bestFormatForRes = { format_id: `${bestVideoOnly.format_id}+${bestAudio.format_id}` };
             }
         }
+        
         if (bestFormatForRes) {
             availableQualities.video[res] = { label: `${res}p`, formatId: bestFormatForRes.format_id };
         }
     });
+
     return availableQualities;
 }
 
-// --- Route to get video info (No changes here) ---
+// --- Route to get video info ---
 app.post("/info", async (req, res) => {
     const { url } = req.body;
     if (!url) return res.status(400).json({ error: "Please provide a video URL." });
@@ -100,66 +110,58 @@ app.post("/info", async (req, res) => {
     }
 });
 
-// --- UPGRADED Download Route ---
+// --- UPGRADED Download Route with Cookie Logic ---
 app.post("/download", async (req, res) => {
     const { url, formatId } = req.body;
     if (!url || !formatId) return res.status(400).json({ error: "URL and Format ID are required." });
 
     try {
-        const metadata = await getVideoInfo(url);
+        const metadata = await getVideoInfo(url); // Get fresh metadata for filename
         const sanitizedTitle = metadata.title.replace(/[^a-zA-Z0-9\s.-]/g, "").trim();
         const tempFilename = `${Date.now()}-${sanitizedTitle || 'video'}.mp4`;
-        const tempFilePath = path.join('/tmp', tempFilename); // Use /tmp for Render's ephemeral disk
+        const tempFilePath = path.join('/tmp', tempFilename);
 
-        console.log(`Downloading to temporary file: ${tempFilePath}`);
         sendProgress({ status: 'initializing', message: 'Initializing download...' });
+        
+        const args = ['--progress', '-f', formatId, '-o', tempFilePath];
+        
+        // Add cookie file if it exists for the specific site
+        const hostname = new URL(url).hostname.replace('www.','');
+        const cookieFile = path.join(__dirname, `${hostname}-cookies.txt`);
+        if (fs.existsSync(cookieFile)) {
+            console.log(`Using cookies for ${hostname}`);
+            args.push('--cookies', cookieFile);
+        }
+        args.push(url);
 
-        const ytProcess = spawn('yt-dlp', [
-            '--progress', // Enable progress reporting
-            '-f', formatId,
-            '-o', tempFilePath, // Output to the temporary file
-            url
-        ]);
+        const ytProcess = spawn('yt-dlp', args);
 
         ytProcess.stdout.on('data', (data) => {
             const output = data.toString();
-            // Regex to capture the percentage from yt-dlp's progress line
             const progressMatch = output.match(/\[download\]\s+([\d\.]+)%/);
             if (progressMatch) {
                 const percent = parseFloat(progressMatch[1]);
                 sendProgress({ status: 'downloading', percent });
             }
         });
-
         ytProcess.stderr.on('data', (data) => console.error(`yt-dlp stderr: ${data}`));
-
         ytProcess.on('close', (code) => {
             if (code === 0) {
-                console.log("Temporary file created successfully.");
-                sendProgress({ status: 'complete', message: 'Download complete! Sending file...' });
-                
-                // Set headers and stream the completed file to the user
+                sendProgress({ status: 'complete', message: 'Sending file...' });
                 res.setHeader('Content-Disposition', `attachment; filename="${sanitizedTitle || 'video'}.mp4"`);
-                res.setHeader('Content-Type', 'video/mp4');
                 const fileStream = fs.createReadStream(tempFilePath);
                 fileStream.pipe(res);
-                
-                // Clean up the temporary file after streaming is complete
-                fileStream.on('end', () => {
-                    fs.unlink(tempFilePath, (err) => {
-                        if (err) console.error("Error deleting temp file:", err);
-                        else console.log("Temp file deleted.");
-                    });
-                });
+                fileStream.on('end', () => fs.unlink(tempFilePath, (err) => {
+                    if (err) console.error("Error deleting temp file:", err);
+                    else console.log("Temp file deleted.");
+                }));
             } else {
-                console.error(`yt-dlp process exited with code ${code}`);
-                sendProgress({ status: 'error', message: `Download failed with code ${code}.` });
+                sendProgress({ status: 'error', message: `Download failed.` });
                 if (!res.headersSent) res.status(500).json({ error: "Failed to download video." });
             }
         });
 
     } catch (error) {
-        console.error("Download route error:", error.message);
         sendProgress({ status: 'error', message: "An unexpected error occurred." });
         if (!res.headersSent) res.status(500).json({ error: "Failed to process video." });
     }
