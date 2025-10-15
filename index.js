@@ -7,6 +7,17 @@ const fs = require("fs");
 const app = express();
 const PORT = process.env.PORT || 4000;
 
+// --- Create cookie files from environment variables ---
+if (process.env.FACEBOOK_COOKIES) {
+    // Note the filename change to match the new logic
+    fs.writeFileSync(path.join(__dirname, 'facebook.com-cookies.txt'), process.env.FACEBOOK_COOKIES);
+    console.log("✅ Facebook cookie file created.");
+}
+if (process.env.TIKTOK_COOKIES) {
+    fs.writeFileSync(path.join(__dirname, 'tiktok.com-cookies.txt'), process.env.TIKTOK_COOKIES);
+    console.log("✅ TikTok cookie file created.");
+}
+
 // --- Middleware ---
 app.use(cors());
 app.use(express.json());
@@ -29,8 +40,18 @@ function sendProgress(data) {
 // --- Helper to get video metadata ---
 async function getVideoInfo(url) {
     return new Promise((resolve, reject) => {
-        // We removed the cookie logic from here to simplify; it will be in the download step
-        const ytProcess = spawn('yt-dlp', ['--dump-single-json', '--no-warnings', url]);
+        const hostname = new URL(url).hostname.replace('www.','');
+        const cookieFile = path.join(__dirname, `${hostname}-cookies.txt`);
+        const args = ['--dump-single-json', '--no-warnings'];
+
+        if (fs.existsSync(cookieFile)) {
+            console.log(`Using cookies for ${hostname}`);
+            args.push('--cookies', cookieFile);
+        }
+        
+        args.push(url);
+
+        const ytProcess = spawn('yt-dlp', args);
         let stdoutData = '', stderrData = '';
         ytProcess.stdout.on('data', (data) => stdoutData += data);
         ytProcess.stderr.on('data', (data) => stderrData += data);
@@ -48,17 +69,14 @@ async function getVideoInfo(url) {
 
 // --- FINAL, UPGRADED Helper to process formats ---
 function processFormats(formats) {
-    if (!Array.isArray(formats)) return { video: {}, audio: null }; // Safety check
+    if (!Array.isArray(formats)) return { video: {}, audio: null };
 
-    const availableQualities = {
-        video: {},
-        audio: null
-    };
+    const availableQualities = { video: {}, audio: null };
 
     // --- Add the reliable "Auto" option ---
     availableQualities.video['Auto'] = {
         label: 'Auto',
-        formatId: 'bestvideo+bestaudio/best' // This is the magic yt-dlp command
+        formatId: 'bestvideo+bestaudio/best' // Magic yt-dlp command
     };
 
     let bestAudio = null;
@@ -72,12 +90,10 @@ function processFormats(formats) {
     const standardResolutions = [1080, 720, 480, 360, 240, 144];
     standardResolutions.forEach(res => {
         let bestFormatForRes = null;
-        // First, look for pre-merged files
         formats.filter(f => f.vcodec !== 'none' && f.acodec !== 'none' && f.height && Math.abs(f.height - res) < 50).forEach(f => {
             if (!bestFormatForRes || (f.tbr || 0) > (bestFormatForRes.tbr || 0)) bestFormatForRes = f;
         });
 
-        // If no pre-merged file, find best video-only and combine with best audio
         if (!bestFormatForRes && bestAudio) {
             let bestVideoOnly = null;
             formats.filter(f => f.vcodec !== 'none' && f.acodec === 'none' && f.height && Math.abs(f.height - res) < 50).forEach(f => {
@@ -96,7 +112,8 @@ function processFormats(formats) {
     return availableQualities;
 }
 
-// --- Route to get video info ---
+
+// --- Routes ---
 app.post("/info", async (req, res) => {
     const { url } = req.body;
     if (!url) return res.status(400).json({ error: "Please provide a video URL." });
@@ -110,13 +127,12 @@ app.post("/info", async (req, res) => {
     }
 });
 
-// --- UPGRADED Download Route with Cookie Logic ---
 app.post("/download", async (req, res) => {
     const { url, formatId } = req.body;
     if (!url || !formatId) return res.status(400).json({ error: "URL and Format ID are required." });
 
     try {
-        const metadata = await getVideoInfo(url); // Get fresh metadata for filename
+        const metadata = await getVideoInfo(url);
         const sanitizedTitle = metadata.title.replace(/[^a-zA-Z0-9\s.-]/g, "").trim();
         const tempFilename = `${Date.now()}-${sanitizedTitle || 'video'}.mp4`;
         const tempFilePath = path.join('/tmp', tempFilename);
@@ -125,11 +141,9 @@ app.post("/download", async (req, res) => {
         
         const args = ['--progress', '-f', formatId, '-o', tempFilePath];
         
-        // Add cookie file if it exists for the specific site
         const hostname = new URL(url).hostname.replace('www.','');
         const cookieFile = path.join(__dirname, `${hostname}-cookies.txt`);
         if (fs.existsSync(cookieFile)) {
-            console.log(`Using cookies for ${hostname}`);
             args.push('--cookies', cookieFile);
         }
         args.push(url);
@@ -140,8 +154,7 @@ app.post("/download", async (req, res) => {
             const output = data.toString();
             const progressMatch = output.match(/\[download\]\s+([\d\.]+)%/);
             if (progressMatch) {
-                const percent = parseFloat(progressMatch[1]);
-                sendProgress({ status: 'downloading', percent });
+                sendProgress({ status: 'downloading', percent: parseFloat(progressMatch[1]) });
             }
         });
         ytProcess.stderr.on('data', (data) => console.error(`yt-dlp stderr: ${data}`));
@@ -153,7 +166,6 @@ app.post("/download", async (req, res) => {
                 fileStream.pipe(res);
                 fileStream.on('end', () => fs.unlink(tempFilePath, (err) => {
                     if (err) console.error("Error deleting temp file:", err);
-                    else console.log("Temp file deleted.");
                 }));
             } else {
                 sendProgress({ status: 'error', message: `Download failed.` });
