@@ -7,7 +7,15 @@ const fs = require("fs");
 const app = express();
 const PORT = process.env.PORT || 4000;
 
-// Middleware, SSE, and Helper functions (no changes here)
+// Create cookie files from environment variables
+if (process.env.FACEBOOK_COOKIES) {
+    fs.writeFileSync(path.join(__dirname, 'facebook.com-cookies.txt'), process.env.FACEBOOK_COOKIES);
+}
+if (process.env.TIKTOK_COOKIES) {
+    fs.writeFileSync(path.join(__dirname, 'tiktok.com-cookies.txt'), process.env.TIKTOK_COOKIES);
+}
+
+// Middleware, SSE, and Helper functions
 app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
@@ -26,7 +34,6 @@ function sendProgress(data) {
 }
 
 async function getVideoInfo(url) {
-    // This function is unchanged
     return new Promise((resolve, reject) => {
         const hostname = new URL(url).hostname.replace('www.','');
         const cookieFile = path.join(__dirname, `${hostname}-cookies.txt`);
@@ -51,7 +58,6 @@ async function getVideoInfo(url) {
     });
 }
 function processFormats(formats) {
-    // This function is unchanged
     if (!Array.isArray(formats)) return { video: {}, audio: null };
     const availableQualities = { video: {}, audio: null };
     availableQualities.video['Auto'] = { label: 'Auto', formatId: 'bestvideo+bestaudio/best' };
@@ -78,7 +84,6 @@ function processFormats(formats) {
     return availableQualities;
 }
 
-// Routes (info route is unchanged)
 app.post("/info", async (req, res) => {
     const { url } = req.body;
     if (!url) return res.status(400).json({ error: "Please provide a video URL." });
@@ -92,12 +97,13 @@ app.post("/info", async (req, res) => {
     }
 });
 
-// --- UPDATED Download Route ---
+// --- THIS IS THE UPDATED DOWNLOAD ROUTE ---
 app.post("/download", async (req, res) => {
     const { url, formatId } = req.body;
     if (!url || !formatId) return res.status(400).json({ error: "URL and Format ID are required." });
 
     try {
+        // We get metadata here once for the filename
         const metadata = await getVideoInfo(url);
         const sanitizedTitle = metadata.title.replace(/[^a-zA-Z0-9\s.-]/g, "").trim();
         const tempFilename = `${Date.now()}-${sanitizedTitle || 'video'}.mp4`;
@@ -117,11 +123,11 @@ app.post("/download", async (req, res) => {
 
         ytProcess.stdout.on('data', (data) => {
             const output = data.toString();
-            // --- NEW, SMARTER REGEX to capture speed and size ---
-            const progressMatch = output.match(/\[download\]\s+([\d\.]+)% of\s+~\s*([\d\.]+\w{1,3}) at\s+([\d\.]+\w{1,3}\/s)/);
+            // --- THIS IS THE NEW, SMARTER REGEX ---
+            const progressMatch = output.match(/\[download\]\s+([\d\.]+)% of[~\s]+([\d\.]+\w+i?B) at\s+([\d\.]+\w+\/s)/);
             if (progressMatch) {
                 const percent = parseFloat(progressMatch[1]);
-                const totalSize = progressMatch[2];
+                const totalSize = progressMatch[2].replace('i', ''); // Sanitize MiB -> MB
                 const speed = progressMatch[3];
                 // Send all the new data to the app
                 sendProgress({ status: 'downloading', percent, totalSize, speed });
@@ -132,7 +138,7 @@ app.post("/download", async (req, res) => {
 
         ytProcess.on('close', (code) => {
             if (code === 0) {
-                // --- NEW "Converting" STATUS ---
+                // Use the "Converting" status as requested
                 sendProgress({ status: 'converting', message: 'Converting...' });
                 res.setHeader('Content-Disposition', `attachment; filename="${sanitizedTitle || 'video'}.mp4"`);
                 const fileStream = fs.createReadStream(tempFilePath);
