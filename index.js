@@ -4,8 +4,10 @@ const cors = require("cors");
 const path = require("path");
 const fs = require("fs");
 
+
 const app = express();
 const PORT = process.env.PORT || 4000;
+
 
 // Create cookie files from environment variables
 if (process.env.FACEBOOK_COOKIES) {
@@ -15,10 +17,12 @@ if (process.env.TIKTOK_COOKIES) {
     fs.writeFileSync(path.join(__dirname, 'tiktok.com-cookies.txt'), process.env.TIKTOK_COOKIES);
 }
 
+
 // Middleware, SSE, and Helper functions
 app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
+
 
 let clients = [];
 app.get("/progress", (req, res) => {
@@ -32,6 +36,7 @@ app.get("/progress", (req, res) => {
 function sendProgress(data) {
     clients.forEach(client => client.write(`data: ${JSON.stringify(data)}\n\n`));
 }
+
 
 async function getVideoInfo(url) {
     return new Promise((resolve, reject) => {
@@ -84,6 +89,7 @@ function processFormats(formats) {
     return availableQualities;
 }
 
+
 app.post("/info", async (req, res) => {
     const { url } = req.body;
     if (!url) return res.status(400).json({ error: "Please provide a video URL." });
@@ -97,13 +103,13 @@ app.post("/info", async (req, res) => {
     }
 });
 
-// --- THIS IS THE UPDATED DOWNLOAD ROUTE ---
+
+// ✅ FIXED: Proper size conversion and progress reporting
 app.post("/download", async (req, res) => {
     const { url, formatId } = req.body;
     if (!url || !formatId) return res.status(400).json({ error: "URL and Format ID are required." });
 
     try {
-        // We get metadata here once for the filename
         const metadata = await getVideoInfo(url);
         const sanitizedTitle = metadata.title.replace(/[^a-zA-Z0-9\s.-]/g, "").trim();
         const tempFilename = `${Date.now()}-${sanitizedTitle || 'video'}.mp4`;
@@ -111,7 +117,7 @@ app.post("/download", async (req, res) => {
 
         sendProgress({ status: 'initializing' });
 
-        const args = ['--progress', '-f', formatId, '-o', tempFilePath];
+        const args = ['--progress', '--newline', '-f', formatId, '-o', tempFilePath];
         const hostname = new URL(url).hostname.replace('www.','');
         const cookieFile = path.join(__dirname, `${hostname}-cookies.txt`);
         if (fs.existsSync(cookieFile)) {
@@ -123,13 +129,19 @@ app.post("/download", async (req, res) => {
 
         ytProcess.stdout.on('data', (data) => {
             const output = data.toString();
-            // --- THIS IS THE NEW, SMARTER REGEX ---
-            const progressMatch = output.match(/\[download\]\s+([\d\.]+)% of[~\s]+([\d\.]+\w+i?B) at\s+([\d\.]+\w+\/s)/);
+            // ✅ FIXED: Better regex that handles both MiB and MB
+            const progressMatch = output.match(/\[download\]\s+([\d\.]+)% of[~\s]+([\d\.]+)(Mi?B|Gi?B|Ki?B) at\s+([\d\.]+)(Mi?B|Gi?B|Ki?B)\/s/);
             if (progressMatch) {
                 const percent = parseFloat(progressMatch[1]);
-                const totalSize = progressMatch[2].replace('i', ''); // Sanitize MiB -> MB
-                const speed = progressMatch[3];
-                // Send all the new data to the app
+                const sizeValue = parseFloat(progressMatch[2]);
+                const sizeUnit = progressMatch[3];
+                const speedValue = parseFloat(progressMatch[4]);
+                const speedUnit = progressMatch[5];
+
+                // Convert MiB to MB (1 MiB = 1.048576 MB)
+                const totalSize = formatSize(sizeValue, sizeUnit);
+                const speed = formatSize(speedValue, speedUnit) + '/s';
+
                 sendProgress({ status: 'downloading', percent, totalSize, speed });
             }
         });
@@ -138,8 +150,12 @@ app.post("/download", async (req, res) => {
 
         ytProcess.on('close', (code) => {
             if (code === 0) {
-                // Use the "Converting" status as requested
-                sendProgress({ status: 'converting', message: 'Converting...' });
+                // Set progress to 100% before converting
+                sendProgress({ status: 'downloading', percent: 100, totalSize: '', speed: '' });
+                
+                // Now send converting status
+                sendProgress({ status: 'converting', message: 'Finalizing...' });
+                
                 res.setHeader('Content-Disposition', `attachment; filename="${sanitizedTitle || 'video'}.mp4"`);
                 const fileStream = fs.createReadStream(tempFilePath);
                 fileStream.pipe(res);
@@ -157,6 +173,20 @@ app.post("/download", async (req, res) => {
         if (!res.headersSent) res.status(500).json({ error: "Failed to process video." });
     }
 });
+
+// ✅ Helper function to convert MiB/GiB to MB/GB
+function formatSize(value, unit) {
+    // Convert MiB to MB (1 MiB = 1.048576 MB)
+    if (unit === 'MiB') {
+        return (value * 1.048576).toFixed(2) + 'MB';
+    } else if (unit === 'GiB') {
+        return (value * 1.073741824).toFixed(2) + 'GB';
+    } else if (unit === 'KiB') {
+        return (value * 1.024).toFixed(2) + 'KB';
+    }
+    // If already MB, GB, KB, just return as is
+    return value.toFixed(2) + unit.replace('i', '');
+}
 
 app.listen(PORT, () => {
     console.log(`✅ Server is live and running on port ${PORT}`);
